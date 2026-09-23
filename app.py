@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import QApplication, QMenu, QToolTip, QWidget
 
 IS_WINDOWS = sys.platform == "win32"
 
+
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
