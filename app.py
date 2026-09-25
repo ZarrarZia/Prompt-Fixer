@@ -3,7 +3,8 @@ Prompt Fixer - floating desktop overlay that rewrites the text in the active
 input field using a local Ollama model.
 
   * Left click            -> transform the focused input in place
-  * Hold 3 seconds        -> mode menu (Standard Structured / Loop Engineering)
+  * Hold 3 seconds        -> mode menu: Standard Structured / Loop Engineering
+                             prompts, Translate to English, Write as Email
   * Right click           -> same menu, instantly
   * Drag                  -> move the widget (position is remembered)
 
@@ -15,8 +16,9 @@ Pipeline (Windows):
   worker thread, and the result is pasted back with Ctrl+A / Ctrl+V.
 
 Requirements:  pip install PyQt6      (Ollama running on localhost:11434)
-Config (env):  PROMPT_FIXER_MODEL (default qwen2.5-coder:1.5b), OLLAMA_HOST
-Headless test: python app.py --test "make a login page"  [--loop]
+Config (env):  PROMPT_FIXER_MODEL (prompt modes, default qwen2.5-coder:1.5b),
+               PROMPT_FIXER_TEXT_MODEL (English/Email, default gemma4:e4b), OLLAMA_HOST
+Headless test: python app.py --test "make a login page"  [--loop | --english | --email]
 """
 
 from __future__ import annotations
@@ -53,7 +55,9 @@ if not OLLAMA_HOST.startswith("http"):
     OLLAMA_HOST = "http://" + OLLAMA_HOST
 OLLAMA_CHAT_URL = f"{OLLAMA_HOST}/api/chat"
 OLLAMA_TAGS_URL = f"{OLLAMA_HOST}/api/tags"
+# Prompt modes favour speed; English/Email favour language accuracy.
 DEFAULT_MODEL = os.environ.get("PROMPT_FIXER_MODEL", "qwen2.5-coder:1.5b")
+DEFAULT_TEXT_MODEL = os.environ.get("PROMPT_FIXER_TEXT_MODEL", "gemma4:e4b")
 
 OLLAMA_OPTIONS = {
     "num_ctx": 2048,        # small KV cache -> low RAM/VRAM, fast decode
@@ -74,6 +78,10 @@ DISC_RADIUS = 22
 
 MODE_STANDARD = "standard"
 MODE_LOOP = "loop"
+MODE_TRANSLATE = "translate"
+MODE_EMAIL = "email"
+PROMPT_MODES = (MODE_STANDARD, MODE_LOOP)
+TEXT_MODES = (MODE_TRANSLATE, MODE_EMAIL)
 
 SYSTEM_PROMPTS = {
     MODE_STANDARD: (
@@ -99,6 +107,45 @@ SYSTEM_PROMPTS = {
         "task complete.\n"
         "Output ONLY the structured prompt without preamble."
     ),
+    MODE_TRANSLATE: (
+        "You are a professional translator. Translate the text between <<< and >>> "
+        "into accurate, natural English.\n"
+        "Rules:\n"
+        "- The text may be Roman Urdu/Hindi (Urdu or Hindi written in English letters), "
+        "Urdu, Arabic, or any other language, or a mix.\n"
+        "- Translate faithfully: keep the exact meaning, tone, person (I/you/we) and "
+        "level of detail.\n"
+        "- Do NOT add, remove, explain, summarize, or answer anything. If the text is a "
+        "question or a request, translate the question or request itself; never reply to it.\n"
+        "- Keep names, numbers, code, URLs, emails and line breaks unchanged.\n"
+        "- If the text is already English, only correct spelling and grammar.\n"
+        "Output ONLY the English translation, without quotes, labels or notes."
+    ),
+    MODE_EMAIL: (
+        "You are a professional business email writer. Turn the content between <<< and "
+        ">>> into a clear, well-formatted email in English.\n"
+        "Format:\n"
+        "Subject: <short, specific subject>\n\n"
+        "<greeting, e.g. Hi [Name],>\n\n"
+        "<body: short paragraphs covering every point from the content, in a polite, "
+        "professional tone>\n\n"
+        "<closing, e.g. Best regards,>\n"
+        "[Your Name]\n"
+        "Rules:\n"
+        "- Use ONLY facts from the content. Do not invent names, dates, numbers, promises "
+        "or details; use placeholders in square brackets like [Name] or [Date] for "
+        "anything missing.\n"
+        "- The content may be in Roman Urdu/Hindi or another language; understand it and "
+        "write the email in English.\n"
+        "Output ONLY the email."
+    ),
+}
+
+# Per-mode overrides of OLLAMA_OPTIONS. Translation must be literal; emails and
+# translations of long text need more output room than a prompt rewrite.
+MODE_OPTIONS = {
+    MODE_TRANSLATE: {"temperature": 0.1, "num_predict": 1024},
+    MODE_EMAIL: {"temperature": 0.3, "num_predict": 768},
 }
 
 # Output tokens dominate latency on CPU; this line cuts them ~40% with no
@@ -108,20 +155,30 @@ BREVITY = ("\nBe terse: each section is 1-2 short lines or a few bullet fragment
 
 # Initial guess of output length per mode (tokens), refined by a running
 # average of real runs; drives the progress percentage.
-EXPECTED_TOKENS = {"standard": 60, "loop": 140}
+# Translation length follows the input, so it is estimated per request instead.
+EXPECTED_TOKENS = {MODE_STANDARD: 60, MODE_LOOP: 140, MODE_EMAIL: 110}
 
 
 @dataclass(frozen=True)
 class ModeStyle:
     label: str
     badge: str
+    glyph: str
+    glyph_pt: int
     primary: QColor
     secondary: QColor
+    badge_bg: QColor
 
 
 MODE_STYLES = {
-    MODE_STANDARD: ModeStyle("Standard Structured", "S", QColor("#22c55e"), QColor("#3b82f6")),
-    MODE_LOOP: ModeStyle("Loop Engineering", "L", QColor("#a855f7"), QColor("#f59e0b")),
+    MODE_STANDARD: ModeStyle("Standard Structured Prompt", "S", "\u2726", 15,
+                             QColor("#22c55e"), QColor("#3b82f6"), QColor("#22c55e")),
+    MODE_LOOP: ModeStyle("Loop Engineering Prompt", "L", "\u21bb", 15,
+                         QColor("#a855f7"), QColor("#f59e0b"), QColor("#f59e0b")),
+    MODE_TRANSLATE: ModeStyle("Translate to English", "EN", "Aa", 12,
+                              QColor("#14b8a6"), QColor("#06b6d4"), QColor("#2dd4bf")),
+    MODE_EMAIL: ModeStyle("Write as Email", "@", "\u2709", 15,
+                          QColor("#f43f5e"), QColor("#ec4899"), QColor("#fb7185")),
 }
 COLOR_ERROR = QColor("#ef4444")
 COLOR_SUCCESS = QColor("#4ade80")
@@ -185,15 +242,19 @@ def ollama_unload(model: str) -> None:
 def ollama_transform(model: str, mode: str, raw: str, progress=None) -> tuple[str, int]:
     """Streamed chat call. `progress(tokens_so_far)` fires per generated token.
     Returns (cleaned text, output token count)."""
+    system = SYSTEM_PROMPTS[mode] + (BREVITY if mode in PROMPT_MODES else "")
+    # Delimit text-mode input so the model treats it as material, not as a request to answer.
+    user = f"<<<\n{raw}\n>>>" if mode in TEXT_MODES else raw
     payload = json.dumps({
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPTS[mode] + BREVITY},
-            {"role": "user", "content": raw},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
         "stream": True,
+        "think": False,          # thinking models (gemma4, qwen3...) otherwise reason for minutes on CPU
         "keep_alive": KEEP_ALIVE,
-        "options": OLLAMA_OPTIONS,
+        "options": {**OLLAMA_OPTIONS, **MODE_OPTIONS.get(mode, {})},
     }).encode()
     req = urllib.request.Request(OLLAMA_CHAT_URL, data=payload, method="POST",
                                  headers={"Content-Type": "application/json"})
@@ -481,7 +542,8 @@ class OverlayWidget(QWidget):
         self.mode = self.settings.value("mode", MODE_STANDARD)
         if self.mode not in MODE_STYLES:
             self.mode = MODE_STANDARD
-        self.model = os.environ.get("PROMPT_FIXER_MODEL") or self.settings.value("model", DEFAULT_MODEL)
+        # Each mode remembers its own model (fast one for prompts, accurate one for text).
+        self.mode_models = {m: self._initial_model(m) for m in MODE_STYLES}
 
         self.win = Win32()
         self.pill = ProgressPill(self.win)
@@ -491,7 +553,7 @@ class OverlayWidget(QWidget):
         # state
         self.online: bool | None = None
         self.models: list[str] = []
-        self.warmed_model: str | None = None
+        self.warmed: set[str] = set()
         self.busy = False
         self.target_hwnd: int | None = None
         self.job_target: int | None = None
@@ -525,6 +587,23 @@ class OverlayWidget(QWidget):
             self.track_timer.start()
         QTimer.singleShot(0, self.check_health)
 
+    # ----------------------------------------------------------------- models
+    def _initial_model(self, mode: str) -> str:
+        if mode in PROMPT_MODES:
+            env, default = os.environ.get("PROMPT_FIXER_MODEL"), DEFAULT_MODEL
+            legacy = self.settings.value("model")      # single-model setting from older versions
+        else:
+            env, default = os.environ.get("PROMPT_FIXER_TEXT_MODEL"), DEFAULT_TEXT_MODEL
+            legacy = None
+        return env or self.settings.value(f"model/{mode}") or legacy or default
+
+    @property
+    def model(self) -> str:
+        return self.mode_models[self.mode]
+
+    def _is_pulled(self, name: str, models: list[str]) -> bool:
+        return name in models or f"{name}:latest" in models
+
     # ------------------------------------------------------------------ setup
     def showEvent(self, e) -> None:
         super().showEvent(e)
@@ -543,7 +622,7 @@ class OverlayWidget(QWidget):
 
     def _update_tooltip(self) -> None:
         status = {None: "checking...", True: "online", False: "OFFLINE"}[self.online]
-        self.setToolTip(f"Prompt Fixer - {MODE_STYLES[self.mode].label} mode\n"
+        self.setToolTip(f"Prompt Fixer - {MODE_STYLES[self.mode].label}\n"
                         f"Model: {self.model} (Ollama {status})\n"
                         "Click: transform  |  Hold 3s / right-click: menu")
 
@@ -572,17 +651,17 @@ class OverlayWidget(QWidget):
         self.online, self.models = True, models
         self._update_tooltip()
         self.update()
-        if self.warmed_model != self.model and (self.model in models or f"{self.model}:latest" in models):
-            self.warmed_model = self.model  # optimistic; reset on failure
-            self._run(ollama_warm, self.model, fail=self._on_warm_fail)
+        # Load only the current mode's model; others load the first time they're used.
+        name = self.model
+        if name not in self.warmed and self._is_pulled(name, models):
+            self.warmed.add(name)  # optimistic; removed again on failure
+            self._run(ollama_warm, name, fail=lambda _m, n=name: self.warmed.discard(n))
 
     def _on_health_fail(self, _msg: str) -> None:
-        self.online, self.warmed_model = False, None
+        self.online = False
+        self.warmed.clear()
         self._update_tooltip()
         self.update()
-
-    def _on_warm_fail(self, _msg: str) -> None:
-        self.warmed_model = None
 
     # --------------------------------------------------------- focus tracking
     def _track_foreground(self) -> None:
@@ -659,15 +738,16 @@ class OverlayWidget(QWidget):
 
         group = QActionGroup(menu)
         for key, style in MODE_STYLES.items():
-            dot = "●"
-            act = QAction(f"{dot}  {style.label} Prompt", menu, checkable=True)
+            if key == TEXT_MODES[0]:
+                menu.addSeparator()
+            act = QAction(f"\u25cf  {style.label}", menu, checkable=True)
             act.setChecked(key == self.mode)
             act.triggered.connect(lambda _=False, k=key: self.set_mode(k))
             group.addAction(act)
             menu.addAction(act)
 
         menu.addSeparator()
-        model_menu = menu.addMenu(f"Model: {self.model}")
+        model_menu = menu.addMenu(f"Model for this mode: {self.model}")
         if self.models:
             mgroup = QActionGroup(model_menu)
             for name in self.models:
@@ -699,14 +779,16 @@ class OverlayWidget(QWidget):
         self.settings.setValue("mode", mode)
         self._update_tooltip()
         self.flash(MODE_STYLES[mode].primary, 400)
-        self._show_tip(f"{MODE_STYLES[mode].label} mode")
+        self._show_tip(f"{MODE_STYLES[mode].label} ({self.model})")
+        self.check_health()   # preloads this mode's model in the background
 
     def set_model(self, name: str) -> None:
-        if name != self.model and self.warmed_model:
-            self._run(ollama_unload, self.warmed_model)   # free its RAM
-        self.warmed_model = None
-        self.model = name
-        self.settings.setValue("model", name)
+        old = self.model
+        self.mode_models[self.mode] = name
+        self.settings.setValue(f"model/{self.mode}", name)
+        if old != name and old in self.warmed and old not in self.mode_models.values():
+            self.warmed.discard(old)
+            self._run(ollama_unload, old)   # no mode uses it any more: free its RAM
         self._update_tooltip()
         self.check_health()   # triggers warm-up of the new model
 
@@ -733,7 +815,7 @@ class OverlayWidget(QWidget):
 
     def _on_preflight_ok(self, models: list[str]) -> None:
         self._on_health_ok(models)
-        if self.model not in models and f"{self.model}:latest" not in models:
+        if not self._is_pulled(self.model, models):
             return self._fail(f"Model '{self.model}' is not pulled. Run: ollama pull {self.model}")
         # Step 2: snapshot clipboard, refocus target, select-all + copy.
         self.progress_target = 6.0
@@ -764,7 +846,11 @@ class OverlayWidget(QWidget):
         # Step 3: streamed inference on the thread pool.
         self.progress_target = 10.0
         self.waiting_first_token = True
-        self.expected_tokens = self._expected_tokens()
+        if self.mode == MODE_TRANSLATE:
+            # A translation is about as long as its source (~3.5 chars per token).
+            self.expected_tokens = max(8, int(len(raw) / 3.5) + 4)
+        else:
+            self.expected_tokens = self._expected_tokens()
         self._run(ollama_transform, self.model, self.mode, raw,
                   ok=self._on_transformed, fail=lambda m: self._fail(m, restore=True),
                   progress=self._on_tokens)
@@ -783,12 +869,15 @@ class OverlayWidget(QWidget):
         return f"expected_tokens/{self.model}/{self.mode}"
 
     def _expected_tokens(self) -> int:
+        default = EXPECTED_TOKENS.get(self.mode, 60)
         try:
-            return max(10, int(float(self.settings.value(self._expected_key(), EXPECTED_TOKENS[self.mode]))))
+            return max(10, int(float(self.settings.value(self._expected_key(), default))))
         except (TypeError, ValueError):
-            return EXPECTED_TOKENS[self.mode]
+            return default
 
     def _learn_tokens(self, actual: int) -> None:
+        if self.mode not in EXPECTED_TOKENS:
+            return
         ema = 0.7 * self._expected_tokens() + 0.3 * actual
         self.settings.setValue(self._expected_key(), round(ema))
 
@@ -917,8 +1006,7 @@ class OverlayWidget(QWidget):
 
         # Hold progress stroke (clockwise from 12 o'clock) + color shift
         if self.hold_progress > 0:
-            target = MODE_STYLES[MODE_LOOP if self.mode == MODE_STANDARD else MODE_STANDARD].primary
-            hp = QPen(target, 3.5)
+            hp = QPen(style.secondary, 3.5)
             hp.setCapStyle(Qt.PenCapStyle.RoundCap)
             p.setPen(hp)
             p.drawArc(ring_rect, 90 * 16, int(-self.hold_progress * 360 * 16))
@@ -937,19 +1025,18 @@ class OverlayWidget(QWidget):
             p.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
             p.drawText(inner, Qt.AlignmentFlag.AlignCenter, f"{int(round(self.progress_shown))}%")
         else:
-            # Center glyph: sparkle for standard, loop arrow for loop mode
+            # Center glyph identifies the mode
             p.setPen(QColor("#f9fafb"))
-            p.setFont(QFont("Segoe UI Symbol" if IS_WINDOWS else "Sans", 15, QFont.Weight.Bold))
-            glyph = "✦" if self.mode == MODE_STANDARD else "↻"
-            p.drawText(inner, Qt.AlignmentFlag.AlignCenter, glyph)
+            p.setFont(QFont("Segoe UI Symbol" if IS_WINDOWS else "Sans", style.glyph_pt, QFont.Weight.Bold))
+            p.drawText(inner, Qt.AlignmentFlag.AlignCenter, style.glyph)
 
         # Mode badge (bottom-right)
         bc = QPointF(c.x() + r * math.cos(math.radians(45)), c.y() + r * math.sin(math.radians(45)))
         p.setPen(QPen(QColor(17, 24, 39), 2))
-        p.setBrush(style.secondary if self.mode == MODE_LOOP else style.primary)
+        p.setBrush(style.badge_bg)
         p.drawEllipse(bc, 8, 8)
         p.setPen(QColor("#0b0f19"))
-        p.setFont(QFont("Segoe UI", 7, QFont.Weight.Black))
+        p.setFont(QFont("Segoe UI", 7 if len(style.badge) == 1 else 5, QFont.Weight.Black))
         p.drawText(QRectF(bc.x() - 8, bc.y() - 8, 16, 16), Qt.AlignmentFlag.AlignCenter, style.badge)
 
         # Offline indicator (top-right)
@@ -965,17 +1052,19 @@ class OverlayWidget(QWidget):
 # Entry point
 # --------------------------------------------------------------------------- #
 def _headless_test(argv: list[str]) -> int:
-    mode = MODE_LOOP if "--loop" in argv else MODE_STANDARD
-    rest = [a for a in argv if a not in ("--test", "--loop")]
+    flags = {"--loop": MODE_LOOP, "--english": MODE_TRANSLATE, "--email": MODE_EMAIL}
+    mode = next((m for flag, m in flags.items() if flag in argv), MODE_STANDARD)
+    rest = [a for a in argv if a != "--test" and a not in flags]
     raw = " ".join(rest) or "add dark mode to my settings page"
+    model = DEFAULT_MODEL if mode in PROMPT_MODES else DEFAULT_TEXT_MODEL
     t = time.perf_counter()
     try:
-        text, tokens = ollama_transform(DEFAULT_MODEL, mode, raw)
+        text, tokens = ollama_transform(model, mode, raw)
     except OllamaError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
     print(text)
-    print(f"\n[{DEFAULT_MODEL} | {mode} | {tokens} tokens | {time.perf_counter() - t:.2f}s]", file=sys.stderr)
+    print(f"\n[{model} | {mode} | {tokens} tokens | {time.perf_counter() - t:.2f}s]", file=sys.stderr)
     return 0
 
 
