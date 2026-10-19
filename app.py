@@ -589,13 +589,15 @@ class OverlayWidget(QWidget):
 
     # ----------------------------------------------------------------- models
     def _initial_model(self, mode: str) -> str:
+        # A model picked in the menu wins; the env vars (read into the DEFAULT_*
+        # constants, and set by setup.bat) only choose the starting default.
         if mode in PROMPT_MODES:
-            env, default = os.environ.get("PROMPT_FIXER_MODEL"), DEFAULT_MODEL
+            default = DEFAULT_MODEL
             legacy = self.settings.value("model")      # single-model setting from older versions
         else:
-            env, default = os.environ.get("PROMPT_FIXER_TEXT_MODEL"), DEFAULT_TEXT_MODEL
+            default = DEFAULT_TEXT_MODEL
             legacy = None
-        return env or self.settings.value(f"model/{mode}") or legacy or default
+        return self.settings.value(f"model/{mode}") or legacy or default
 
     @property
     def model(self) -> str:
