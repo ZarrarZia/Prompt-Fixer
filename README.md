@@ -1,8 +1,8 @@
 # Prompt Fixer
 
-A floating desktop button that rewrites whatever you're typing into a well-structured AI prompt, using a **local** LLM through [Ollama](https://ollama.com). It runs entirely on your machine, with no API keys and no data leaving your PC.
+A floating desktop button that rewrites whatever you're typing, using a **local** LLM through [Ollama](https://ollama.com). It can turn text into a well-structured AI prompt, translate it into English, or write it up as a formatted email. It runs entirely on your machine, with no API keys and no data leaving your PC.
 
-Type a rough instruction in VS Code, a terminal, a browser, or a chat box, click the overlay, and the text is replaced in place with a clean, structured prompt.
+Type in VS Code, a terminal, a browser, or a chat box, click the overlay, and the text is replaced in place.
 
 ```
 before:  add rate limiting to my express api login route
@@ -13,12 +13,26 @@ after:   [ROLE & CONTEXT]: Backend developer working on an Express API with auth
          return a clear error message when the limit is hit.
 ```
 
+## The 4 modes at a glance
+
+| Mode | What you type | What you get | AI model |
+|---|---|---|---|
+| 🟢 **Standard Structured Prompt** | `add dark mode to my settings page` | A prompt with `[ROLE & CONTEXT]`, `[TASK]` and `[CONSTRAINTS]` | `qwen2.5-coder:1.5b` (fast) |
+| 🟣 **Loop Engineering Prompt** | `fix the flaky login test` | An agent plan: goal, inspect, minimal change, verify, self-correct, done criteria | `qwen2.5-coder:1.5b` (fast) |
+| 🩵 **Translate to English** | `mujhe kal tak report bhej do warna client naraz ho jayega` | `Send me the report by tomorrow or the client will get upset.` | `gemma4:e4b` (accurate) |
+| 🩷 **Write as Email** | `client ko batana hai ke website ka kaam 2 din late hoga kyunke server issue aa gaya tha` | A complete email: subject, greeting, body, sign-off | `gemma4:e4b` (accurate) |
+
+Switch modes from the menu (right-click the button, or hold it for 3 seconds). See [AI models](#ai-models) for why each mode uses the model it does.
+
 ## Features
 
 - **One-click, in-place rewrite:** it copies the text from the focused input, rewrites it, and pastes it back.
-- **Two prompt modes**
-  - 🟢 **Standard Structured** (`S` badge): role, task, and constraints.
-  - 🟣 **Loop Engineering** (`L` badge): goal, then inspection, incremental diff, verification, self-correction, and termination criteria. Built for autonomous coding agents.
+- **Four modes**
+  - 🟢 **Standard Structured Prompt** (`S` badge): role, task, and constraints.
+  - 🟣 **Loop Engineering Prompt** (`L` badge): goal, then inspection, incremental diff, verification, self-correction, and termination criteria. Built for autonomous coding agents.
+  - 🩵 **Translate to English** (`EN` badge): a faithful translation from any language, including Roman Urdu/Hindi. It adds, removes, and answers nothing; English input only gets its spelling and grammar fixed.
+  - 🩷 **Write as Email** (`@` badge): turns rough notes into a formatted email with a subject, greeting, body, and sign-off. It uses only facts from your text and puts `[placeholders]` where details are missing.
+- **A model per mode:** a small, fast model for prompts and a stronger multilingual model for English and Email.
 - **Live progress:** a green progress ring with a percentage, plus a status pill (Copying → Thinking → Rewriting → Pasting).
 - **Always on top, never steals focus:** your cursor stays in the app you're working in.
 - **Tuned for local inference:** the model stays loaded (`keep_alive: -1`), uses a small context (`num_ctx: 2048`), low temperature, a capped output length, and streamed responses.
@@ -32,19 +46,52 @@ after:   [ROLE & CONTEXT]: Backend developer working on an Express API with auth
 | OS | **Windows 10 / 11** (focus switching and keystrokes use the Win32 API) |
 | Python | 3.10 or newer |
 | Ollama | latest, from [ollama.com/download](https://ollama.com/download) |
-| RAM | ~2 GB free for the default model |
+| RAM | ~2 GB for the prompt modes; ~11 GB free if you also use English/Email with the default `gemma4:e4b` (see [AI models](#ai-models)) |
+| Disk | ~1 GB for the prompt modes, plus ~9.6 GB for `gemma4:e4b` |
 
 ## Installation
+
+### Quick install (recommended)
+
+1. Download the project: **Code → Download ZIP** on GitHub, then extract it (or `git clone https://github.com/ZarrarZia/Prompt-Fixer.git`).
+2. Double-click **`setup.bat`**.
+
+`setup.bat` does everything for you:
+
+| Step | What it does |
+|---|---|
+| 1 | Checks for Python 3.10+, and installs it with `winget` if it's missing |
+| 2 | Installs the Python package (`pip install -r requirements.txt`) |
+| 3 | Checks for Ollama, installs it with `winget` if it's missing, and starts it |
+| 4 | Downloads the AI models (it asks which English/Email model you want; see below) |
+| 5 | Creates a **Prompt Fixer** desktop shortcut, and optionally starts it with Windows |
+
+When it asks about the English + Email model:
+
+- **1:** `gemma4:e4b`, the most accurate (9.6 GB download, needs ~10 GB of RAM)
+- **2:** `qwen2.5:3b`, lighter (2 GB) but less accurate on Roman Urdu
+- **3:** skip, if you only want the two prompt modes
+
+For a silent install with the default models, run `setup.bat /yes`.
+
+> **Why aren't the models in `requirements.txt`?** That file can only list Python packages for pip. Ollama models are downloaded by Ollama, which is why `setup.bat` exists.
+
+If Python had to be installed, setup asks you to run `setup.bat` once more so Windows picks up the new PATH.
+
+### Manual install
 
 **1. Install Python.** Download it from [python.org](https://www.python.org/downloads/). During setup, tick **"Add Python to PATH"**.
 
 **2. Install Ollama.** Download it from [ollama.com/download](https://ollama.com/download) and run the installer. Ollama then runs in the background (you'll see its icon in the system tray).
 
-**3. Download the model** (about 1 GB):
+**3. Download the models:**
 
 ```powershell
-ollama pull qwen2.5-coder:1.5b
+ollama pull qwen2.5-coder:1.5b   # prompt modes, ~1 GB
+ollama pull gemma4:e4b           # English + Email modes, ~9.6 GB
 ```
+
+If you only want the prompt modes, you can skip `gemma4:e4b`. For a lighter English/Email setup, see [AI models](#ai-models).
 
 **4. Get the code and install the dependency:**
 
@@ -73,17 +120,33 @@ pyw app.py
 | **Right-click** | Open the menu instantly |
 | **Drag** | Move the button (its position is remembered) |
 
-From the menu you can switch between **Standard** and **Loop** mode, pick any installed Ollama model, recheck the connection, or quit.
+From the menu you can switch modes, choose the model for the current mode, recheck the connection, or quit.
 
 **Tip:** click inside the text box you want to fix *first*, then click the overlay.
 
 ### Status indicators
 
-- 🟢 **Green/blue ring, `S` badge:** Standard Structured mode
-- 🟣 **Purple/amber ring, `L` badge:** Loop Engineering mode
+- 🟢 **Green/blue ring, `S` badge:** Standard Structured Prompt
+- 🟣 **Purple/amber ring, `L` badge:** Loop Engineering Prompt
+- 🩵 **Teal ring, `Aa` icon, `EN` badge:** Translate to English
+- 🩷 **Pink ring, envelope icon, `@` badge:** Write as Email
 - 🔴 **Red dot:** Ollama is offline
 - **Green flash:** the rewrite was pasted
 - **Red flash with a tooltip:** something failed (the tooltip explains what)
+
+## AI models
+
+Everything runs locally through Ollama. Each mode uses the model that fits its job:
+
+| Model | Used for | Download | Why |
+|---|---|---|---|
+| `qwen2.5-coder:1.5b` | Standard, Loop | ~1 GB | Small and fast, and good at structured, technical prompts. About 4 s (Standard) and 10 s (Loop) on a CPU-only laptop. |
+| `gemma4:e4b` | English, Email | ~9.6 GB | Multilingual and accurate, including Roman Urdu/Hindi. About 12–15 s per sentence on CPU. |
+| `qwen2.5:3b` | optional, any mode | ~2 GB | A lighter English/Email alternative, but less accurate. Its license is non-commercial only. |
+
+**Why two models?** In testing on a CPU-only laptop, the 1.5B model was fast enough for prompts but not accurate enough for translation. For example, it turned "send me the report" into "I will send you a report", and it added facts that weren't in the email notes. `gemma4:e4b` got every test right, so English and Email use it by default.
+
+**Speed tips:** each model stays loaded in memory after first use, so there's no reload delay. Gemma's "thinking" step is turned off, which cut its response time from over a minute to about 13 s. A GPU makes everything much faster.
 
 ## Configuration
 
@@ -91,25 +154,23 @@ Optional environment variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PROMPT_FIXER_MODEL` | `qwen2.5-coder:1.5b` | Ollama model to use |
+| `PROMPT_FIXER_MODEL` | `qwen2.5-coder:1.5b` | Starting model for the Standard and Loop modes |
+| `PROMPT_FIXER_TEXT_MODEL` | `gemma4:e4b` | Starting model for the English and Email modes (`setup.bat` sets this if you choose option 2) |
+
+A model you pick from the menu always takes priority over these defaults.
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server address |
 
 Other settings are constants near the top of `app.py`:
 
-- `SYSTEM_PROMPTS`: the rewrite instructions for each mode.
-- `BREVITY`: asks the model for terse output, which is roughly 40% faster. Set it to `""` for longer rewrites.
+- `SYSTEM_PROMPTS`: the instructions for each mode.
+- `BREVITY`: asks the model for terse output in the prompt modes, which is roughly 40% faster. Set it to `""` for longer rewrites.
+- `MODE_OPTIONS`: per-mode temperature and output length (translation uses 0.1 to stay literal).
 - `OLLAMA_OPTIONS`: `num_ctx`, `temperature`, and `num_predict`.
 - `HOLD_MS`: how long to hold for the menu.
 
-### Choosing a model
+### Choosing models
 
-| Model | Size | Notes |
-|---|---|---|
-| `qwen2.5-coder:1.5b` | ~1 GB | **Default.** Fast on CPU-only laptops (~4 s Standard, ~10 s Loop) |
-| `qwen2.5:3b` | ~2 GB | Better wording, about 2× slower on CPU |
-| any larger model | varies | Recommended only if you have a GPU |
-
-Pull another model with `ollama pull <name>`, then select it from the right-click menu.
+Each mode remembers its own model. Switch to a mode, then pick **Model for this mode** in the menu. A model loads the first time its mode is used. To try another model, download it with `ollama pull <name>`, then select it from the menu. See [AI models](#ai-models) for the recommended ones.
 
 ## Quick test (no GUI)
 
@@ -118,6 +179,8 @@ Checks that Ollama and the model work:
 ```powershell
 py app.py --test "make a login page"
 py app.py --test --loop "fix the flaky login test"
+py app.py --test --english "mujhe kal tak report bhej do"
+py app.py --test --email "client ko batana hai ke kaam 2 din late hoga"
 ```
 
 ## Start automatically with Windows
@@ -131,8 +194,10 @@ Launching `app.py` again automatically closes any copy that is already running, 
 
 | Problem | Fix |
 |---|---|
+| `setup.bat` says winget is missing | Install "App Installer" from the Microsoft Store, or install Python and Ollama manually (see [Manual install](#manual-install)) |
 | Red dot / "Ollama is offline" | Start Ollama from the Start menu, or run `ollama serve` |
-| "Model ... is not pulled" | `ollama pull qwen2.5-coder:1.5b` |
+| "Model ... is not pulled" | Run the `ollama pull` command shown in the message (e.g. `ollama pull gemma4:e4b`) |
+| English/Email is slow or uses a lot of RAM | Choose `qwen2.5:3b` for that mode from the menu (faster, slightly less accurate) |
 | "Nothing was copied" | Click inside the input box before clicking the overlay |
 | Doesn't work in an admin app | Run Prompt Fixer as administrator too (Windows blocks keystrokes into elevated windows) |
 | Terminal only rewrites the current line | Expected: many shells treat Ctrl+A as "go to start of line" |
