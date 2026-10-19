@@ -19,8 +19,8 @@ after:   [ROLE & CONTEXT]: Backend developer working on an Express API with auth
 |---|---|---|---|
 | 🟢 **Standard Structured Prompt** | `add dark mode to my settings page` | A prompt with `[ROLE & CONTEXT]`, `[TASK]` and `[CONSTRAINTS]` | `qwen2.5-coder:1.5b` (fast) |
 | 🟣 **Loop Engineering Prompt** | `fix the flaky login test` | An agent plan: goal, inspect, minimal change, verify, self-correct, done criteria | `qwen2.5-coder:1.5b` (fast) |
-| 🩵 **Translate to English** | `mujhe kal tak report bhej do warna client naraz ho jayega` | `Send me the report by tomorrow or the client will get upset.` | `gemma4:e4b` (accurate) |
-| 🩷 **Write as Email** | `client ko batana hai ke website ka kaam 2 din late hoga kyunke server issue aa gaya tha` | A complete email: subject, greeting, body, sign-off | `gemma4:e4b` (accurate) |
+| 🩵 **Translate to English** | `server ka masla abhi tak hal nahi hua, team us par kaam kar rahi hai` | `The server issue has not been resolved yet, the team is working on it.` | `qwen2.5:3b` |
+| 🩷 **Write as Email** | `client ko batana hai ke website ka kaam 2 din late hoga kyunke server issue aa gaya tha` | A complete email: subject, greeting, body, sign-off | `qwen2.5:3b` |
 
 Switch modes from the menu (right-click the button, or hold it for 3 seconds). See [AI models](#ai-models) for why each mode uses the model it does.
 
@@ -46,8 +46,8 @@ Switch modes from the menu (right-click the button, or hold it for 3 seconds). S
 | OS | **Windows 10 / 11** (focus switching and keystrokes use the Win32 API) |
 | Python | 3.10 or newer |
 | Ollama | latest, from [ollama.com/download](https://ollama.com/download) |
-| RAM | ~2 GB for the prompt modes; ~11 GB free if you also use English/Email with the default `gemma4:e4b` (see [AI models](#ai-models)) |
-| Disk | ~1 GB for the prompt modes, plus ~9.6 GB for `gemma4:e4b` |
+| RAM | ~4 GB free (both default models loaded); ~12 GB if you choose the optional `gemma4:e4b` (see [AI models](#ai-models)) |
+| Disk | ~3 GB for the default models (+9.6 GB for the optional `gemma4:e4b`) |
 
 ## Installation
 
@@ -68,8 +68,8 @@ Switch modes from the menu (right-click the button, or hold it for 3 seconds). S
 
 When it asks about the English + Email model:
 
-- **1:** `gemma4:e4b`, the most accurate (9.6 GB download, needs ~10 GB of RAM)
-- **2:** `qwen2.5:3b`, lighter (2 GB) but less accurate on Roman Urdu
+- **1:** `qwen2.5:3b`, **recommended**: about 2 GB, fast, and good for most text
+- **2:** `gemma4:e4b`, the most accurate on Roman Urdu, but heavy (9.6 GB download, ~10 GB of RAM)
 - **3:** skip, if you only want the two prompt modes
 
 For a silent install with the default models, run `setup.bat /yes`.
@@ -88,10 +88,10 @@ If Python had to be installed, setup asks you to run `setup.bat` once more so Wi
 
 ```powershell
 ollama pull qwen2.5-coder:1.5b   # prompt modes, ~1 GB
-ollama pull gemma4:e4b           # English + Email modes, ~9.6 GB
+ollama pull qwen2.5:3b           # English + Email modes, ~2 GB
 ```
 
-If you only want the prompt modes, you can skip `gemma4:e4b`. For a lighter English/Email setup, see [AI models](#ai-models).
+If you only want the prompt modes, you can skip `qwen2.5:3b`. For the most accurate translation, see [AI models](#ai-models).
 
 **4. Get the code and install the dependency:**
 
@@ -141,12 +141,14 @@ Everything runs locally through Ollama. Each mode uses the model that fits its j
 | Model | Used for | Download | Why |
 |---|---|---|---|
 | `qwen2.5-coder:1.5b` | Standard, Loop | ~1 GB | Small and fast, and good at structured, technical prompts. About 4 s (Standard) and 10 s (Loop) on a CPU-only laptop. |
-| `gemma4:e4b` | English, Email | ~9.6 GB | Multilingual and accurate, including Roman Urdu/Hindi. About 12–15 s per sentence on CPU. |
-| `qwen2.5:3b` | optional, any mode | ~2 GB | A lighter English/Email alternative, but less accurate. Its license is non-commercial only. |
+| `qwen2.5:3b` | English, Email | ~2 GB | **Default.** A good balance of speed, size, and language quality. About 4–8 s per sentence and 15 s per email on CPU. |
+| `gemma4:e4b` | optional: English, Email | ~9.6 GB | The most accurate on Roman Urdu/Hindi, but heavy: ~10 GB of RAM and ~13 s per sentence on CPU. |
 
-**Why two models?** In testing on a CPU-only laptop, the 1.5B model was fast enough for prompts but not accurate enough for translation. For example, it turned "send me the report" into "I will send you a report", and it added facts that weren't in the email notes. `gemma4:e4b` got every test right, so English and Email use it by default.
+**Why these models?** The 1.5B model is fast enough for prompts but too inaccurate for translation. `qwen2.5:3b` is the default for English and Email because it's light and fast. To improve its accuracy, the app gives it 5 worked Roman Urdu → English examples before each translation; in testing on sentences it hadn't seen, that raised accuracy from 4/8 to 6/8 sentences correct. It can still misread some slang words (e.g. "naraz" = upset), so for important text, choose `gemma4:e4b` for that mode from the menu.
 
-**Speed tips:** each model stays loaded in memory after first use, so there's no reload delay. Gemma's "thinking" step is turned off, which cut its response time from over a minute to about 13 s. A GPU makes everything much faster.
+> **License note:** `qwen2.5:3b` is under the Qwen Research License, which allows **non-commercial use only**. `qwen2.5-coder:1.5b` (Apache 2.0) and `gemma4:e4b` (Gemma terms) allow commercial use.
+
+**Speed tips:** each model stays loaded in memory after first use, so there's no reload delay. "Thinking" is turned off for models that support it (such as Gemma), which cuts their response time from over a minute to seconds. A GPU makes everything much faster.
 
 ## Configuration
 
@@ -155,7 +157,7 @@ Optional environment variables:
 | Variable | Default | Purpose |
 |---|---|---|
 | `PROMPT_FIXER_MODEL` | `qwen2.5-coder:1.5b` | Starting model for the Standard and Loop modes |
-| `PROMPT_FIXER_TEXT_MODEL` | `gemma4:e4b` | Starting model for the English and Email modes (`setup.bat` sets this if you choose option 2) |
+| `PROMPT_FIXER_TEXT_MODEL` | `qwen2.5:3b` | Starting model for the English and Email modes (`setup.bat` sets this if you choose option 2) |
 
 A model you pick from the menu always takes priority over these defaults.
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server address |
@@ -196,8 +198,8 @@ Launching `app.py` again automatically closes any copy that is already running, 
 |---|---|
 | `setup.bat` says winget is missing | Install "App Installer" from the Microsoft Store, or install Python and Ollama manually (see [Manual install](#manual-install)) |
 | Red dot / "Ollama is offline" | Start Ollama from the Start menu, or run `ollama serve` |
-| "Model ... is not pulled" | Run the `ollama pull` command shown in the message (e.g. `ollama pull gemma4:e4b`) |
-| English/Email is slow or uses a lot of RAM | Choose `qwen2.5:3b` for that mode from the menu (faster, slightly less accurate) |
+| "Model ... is not pulled" | Run the `ollama pull` command shown in the message (e.g. `ollama pull qwen2.5:3b`) |
+| A translation has the wrong meaning | Run `ollama pull gemma4:e4b`, then choose it for that mode from the menu (more accurate, but heavier and slower) |
 | "Nothing was copied" | Click inside the input box before clicking the overlay |
 | Doesn't work in an admin app | Run Prompt Fixer as administrator too (Windows blocks keystrokes into elevated windows) |
 | Terminal only rewrites the current line | Expected: many shells treat Ctrl+A as "go to start of line" |

@@ -11,8 +11,8 @@ cd /d "%~dp0"
 title Prompt Fixer - Setup
 
 set "PROMPT_MODEL=qwen2.5-coder:1.5b"
-set "TEXT_MODEL=gemma4:e4b"
-set "LIGHT_TEXT_MODEL=qwen2.5:3b"
+set "TEXT_MODEL=qwen2.5:3b"
+set "ACCURATE_TEXT_MODEL=gemma4:e4b"
 set "UNATTENDED=0"
 if /i "%~1"=="/yes" set "UNATTENDED=1"
 
@@ -68,10 +68,10 @@ if errorlevel 1 goto :pull_failed
 set "TEXT_CHOICE=1"
 if "%UNATTENDED%"=="0" (
     echo.
-    echo   English + Email modes need a stronger language model:
-    echo     1 = %TEXT_MODEL%   most accurate, about 9.6 GB download, needs ~10 GB RAM
-    echo     2 = %LIGHT_TEXT_MODEL%   lighter, about 2 GB, less accurate on Roman Urdu
-    echo     3 = skip            only use the two prompt modes
+    echo   English + Email modes need a language model:
+    echo     1 = %TEXT_MODEL%   recommended: about 2 GB, fast, good for most text
+    echo     2 = %ACCURATE_TEXT_MODEL%   most accurate on Roman Urdu, but heavy: 9.6 GB download, ~10 GB RAM
+    echo     3 = skip         only use the two prompt modes
     echo.
     choice /c 123 /n /m "  Choose 1, 2 or 3: "
     set "TEXT_CHOICE=!errorlevel!"
@@ -82,10 +82,10 @@ if "!TEXT_CHOICE!"=="1" (
     reg delete HKCU\Environment /v PROMPT_FIXER_TEXT_MODEL /f >nul 2>&1
 )
 if "!TEXT_CHOICE!"=="2" (
-    "!OLLAMA!" pull %LIGHT_TEXT_MODEL%
+    "!OLLAMA!" pull %ACCURATE_TEXT_MODEL%
     if errorlevel 1 goto :pull_failed
-    setx PROMPT_FIXER_TEXT_MODEL %LIGHT_TEXT_MODEL% >nul
-    echo       English + Email modes will use %LIGHT_TEXT_MODEL% by default.
+    setx PROMPT_FIXER_TEXT_MODEL %ACCURATE_TEXT_MODEL% >nul
+    echo       English + Email modes will use %ACCURATE_TEXT_MODEL% by default.
 )
 if "!TEXT_CHOICE!"=="3" echo       Skipped. English + Email modes will ask you to download a model.
 
